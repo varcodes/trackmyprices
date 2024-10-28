@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-
 import {
   getLowestPrice,
   getHighestPrice,
@@ -17,11 +16,13 @@ export const revalidate = 0;
 
 export async function GET(request: Request) {
   try {
-    connectToDB();
+    await connectToDB();
 
     const products = await Product.find({});
 
-    if (!products) throw new Error("No product fetched");
+    if (!products || products.length === 0) {
+      throw new Error("No products fetched");
+    }
 
     // ======================== 1 SCRAPE LATEST PRODUCT DETAILS & UPDATE DB
     const updatedProducts = await Promise.all(
@@ -29,12 +30,19 @@ export async function GET(request: Request) {
         // Scrape product
         const scrapedProduct = await scrapeAmazonProduct(currentProduct.url);
 
-        if (!scrapedProduct) return;
+        // Check if scrapedProduct is defined and valid
+        if (!scrapedProduct) {
+          console.error(
+            `Failed to scrape product for URL: ${currentProduct.url}`
+          );
+          return null; // Skip this product if scraping failed
+        }
 
+        // Ensure priceHistory is defined and handle potential undefined values
         const updatedPriceHistory = [
-          ...currentProduct.priceHistory,
+          ...(currentProduct.priceHistory || []),
           {
-            price: scrapedProduct.currentPrice,
+            price: scrapedProduct.currentPrice || 0, // Default to 0 if undefined
           },
         ];
 
@@ -48,10 +56,9 @@ export async function GET(request: Request) {
 
         // Update Products in DB
         const updatedProduct = await Product.findOneAndUpdate(
-          {
-            url: product.url,
-          },
-          product
+          { url: product.url },
+          product,
+          { new: true } // Return the updated document
         );
 
         // ======================== 2 CHECK EACH PRODUCT'S STATUS & SEND EMAIL ACCORDINGLY
@@ -60,7 +67,7 @@ export async function GET(request: Request) {
           currentProduct
         );
 
-        if (emailNotifType && updatedProduct.users.length > 0) {
+        if (emailNotifType && updatedProduct?.users.length > 0) {
           const productInfo = {
             title: updatedProduct.title,
             url: updatedProduct.url,
@@ -84,9 +91,13 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       message: "Ok",
-      data: updatedProducts,
+      data: updatedProducts.filter(Boolean), // Filter out any null values
     });
   } catch (error: any) {
-    throw new Error(`Failed to get all products: ${error.message}`);
+    console.error(`Error: ${error.message}`);
+    return NextResponse.json(
+      { error: `Failed to get all products: ${error.message}` },
+      { status: 500 }
+    );
   }
 }
