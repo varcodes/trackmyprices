@@ -50,7 +50,7 @@ export async function GET(request: Request) {
         const scrapedProduct = await scrapeWithRetry(currentProduct.url);
 
         // Check if scrapedProduct is defined and valid
-        if (!scrapedProduct) {
+        if (!scrapedProduct || !scrapedProduct.currentPrice) {
           console.error(
             `Failed to scrape product for URL: ${currentProduct.url}`
           );
