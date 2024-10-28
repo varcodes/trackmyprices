@@ -14,6 +14,25 @@ export const maxDuration = 60; // This function can run for a maximum of 60 seco
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+async function scrapeWithRetry(url: string, retries = 3, backoff = 3000) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const scrapedProduct = await scrapeAmazonProduct(url);
+      return scrapedProduct; // Return the result if successful
+    } catch (error: any) {
+      if (error.response && error.response.status === 503) {
+        console.warn(
+          `Attempt ${attempt + 1} failed: 503 Service Unavailable. Retrying...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoff)); // Wait before retrying
+      } else {
+        throw error; // Rethrow the error if it's not a 503
+      }
+    }
+  }
+  throw new Error(`Failed to scrape ${url} after ${retries} attempts.`);
+}
+
 export async function GET(request: Request) {
   try {
     await connectToDB();
@@ -27,8 +46,8 @@ export async function GET(request: Request) {
     // ======================== 1 SCRAPE LATEST PRODUCT DETAILS & UPDATE DB
     const updatedProducts = await Promise.all(
       products.map(async (currentProduct) => {
-        // Scrape product
-        const scrapedProduct = await scrapeAmazonProduct(currentProduct.url);
+        // Scrape product with retry logic
+        const scrapedProduct = await scrapeWithRetry(currentProduct.url);
 
         // Check if scrapedProduct is defined and valid
         if (!scrapedProduct) {
