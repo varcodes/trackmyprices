@@ -7,6 +7,7 @@ import { Product } from "@/types";
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { GetStaticProps } from "next";
 
 type Props = {
   params: { id: string };
