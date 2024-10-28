@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+
 import {
   getLowestPrice,
   getHighestPrice,
@@ -10,58 +11,30 @@ import Product from "@/lib/models/product.model";
 import { scrapeAmazonProduct } from "@/lib/scraper";
 import { generateEmailBody, sendEmail } from "@/lib/nodemailer";
 
-export const maxDuration = 60; // This function can run for a maximum of 60 seconds
+export const maxDuration = 300; // This function can run for a maximum of 300 seconds
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-async function scrapeWithRetry(url: string, retries = 3, backoff = 3000) {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const scrapedProduct = await scrapeAmazonProduct(url);
-      return scrapedProduct; // Return the result if successful
-    } catch (error: any) {
-      if (error.response && error.response.status === 503) {
-        console.warn(
-          `Attempt ${attempt + 1} failed: 503 Service Unavailable. Retrying...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, backoff)); // Wait before retrying
-      } else {
-        throw error; // Rethrow the error if it's not a 503
-      }
-    }
-  }
-  throw new Error(`Failed to scrape ${url} after ${retries} attempts.`);
-}
-
 export async function GET(request: Request) {
   try {
-    await connectToDB();
+    connectToDB();
 
     const products = await Product.find({});
 
-    if (!products || products.length === 0) {
-      throw new Error("No products fetched");
-    }
+    if (!products) throw new Error("No product fetched");
 
     // ======================== 1 SCRAPE LATEST PRODUCT DETAILS & UPDATE DB
     const updatedProducts = await Promise.all(
       products.map(async (currentProduct) => {
-        // Scrape product with retry logic
-        const scrapedProduct = await scrapeWithRetry(currentProduct.url);
+        // Scrape product
+        const scrapedProduct = await scrapeAmazonProduct(currentProduct.url);
 
-        // Check if scrapedProduct is defined and valid
-        if (!scrapedProduct || !scrapedProduct.currentPrice) {
-          console.error(
-            `Failed to scrape product for URL: ${currentProduct.url}`
-          );
-          return null; // Skip this product if scraping failed
-        }
+        if (!scrapedProduct) return;
 
-        // Ensure priceHistory is defined and handle potential undefined values
         const updatedPriceHistory = [
-          ...(currentProduct.priceHistory || []),
+          ...currentProduct.priceHistory,
           {
-            price: scrapedProduct.currentPrice || 0, // Default to 0 if undefined
+            price: scrapedProduct.currentPrice,
           },
         ];
 
@@ -75,9 +48,10 @@ export async function GET(request: Request) {
 
         // Update Products in DB
         const updatedProduct = await Product.findOneAndUpdate(
-          { url: product.url },
-          product,
-          { new: true } // Return the updated document
+          {
+            url: product.url,
+          },
+          product
         );
 
         // ======================== 2 CHECK EACH PRODUCT'S STATUS & SEND EMAIL ACCORDINGLY
@@ -86,7 +60,7 @@ export async function GET(request: Request) {
           currentProduct
         );
 
-        if (emailNotifType && updatedProduct?.users.length > 0) {
+        if (emailNotifType && updatedProduct.users.length > 0) {
           const productInfo = {
             title: updatedProduct.title,
             url: updatedProduct.url,
@@ -110,13 +84,9 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       message: "Ok",
-      data: updatedProducts.filter(Boolean), // Filter out any null values
+      data: updatedProducts,
     });
   } catch (error: any) {
-    console.error(`Error: ${error.message}`);
-    return NextResponse.json(
-      { error: `Failed to get all products: ${error.message}` },
-      { status: 500 }
-    );
+    throw new Error(`Failed to get all products: ${error.message}`);
   }
 }
